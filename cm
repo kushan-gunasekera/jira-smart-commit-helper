@@ -1,0 +1,106 @@
+#!/bin/bash
+
+# ==========================================
+# This script helps you create a properly-formatted git commit message
+# and optionally push your changes to the current branch.
+# It tries to extract the project name from the branch name automatically.
+# If it cannot, it asks you for the project name.
+# It only works if you have already staged files with 'git add'.
+# ==========================================
+
+# Step 1: Check if a CURRENT_PROJECT environment variable is set.
+PROJECT=$(printenv CURRENT_PROJECT)
+
+# Step 2: Get the current git branch name.
+# This is the branch where you are working.
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+
+# Step 3: Check if there are any staged changes to commit.
+# If there are no staged changes, stop the script.
+if git diff --cached --quiet; then
+    echo "There are no staged changes to commit. Please add files with 'git add' before running this script."
+    exit 0  # If sourced; use 'exit 0' if run as standalone
+fi
+
+# Step 4: Define a function to extract the project name from the branch name.
+# The function checks if the branch follows naming rules like:
+# 'feature/PROJECT-123-description' or 'PROJECT-123-description'
+extract_project_name() {
+    local branch="$1"
+    # Check for branch patterns with a prefix (feature/, bugfix/, etc.)
+    if [[ "$branch" =~ ^(bugfix|feature|hotfix|release)/([A-Za-z0-9]+)-[0-9]+.*$ ]]; then
+        # The project name is the part after the slash and before the hyphen
+        echo "${BASH_REMATCH[2]}"
+        return
+    fi
+    # Check for branches without a prefix, e.g., 'PROJECT-123-description'
+    if [[ "$branch" =~ ^([A-Za-z0-9]+)-[0-9]+.*$ ]]; then
+        # The project name is the part before the first hyphen
+        echo "${BASH_REMATCH[1]}"
+        return
+    fi
+    # If no pattern matches, return empty string
+    echo ""
+}
+
+# Step 5: Set the PROJECT variable if it is not already set.
+# Try to extract the project name from the branch name.
+# If not possible, ask the user to type it in.
+if [[ -z "$PROJECT" ]]; then
+    PROJECT=$(extract_project_name "$BRANCH_NAME")
+    if [[ -z "$PROJECT" ]]; then
+        echo "Could not determine project name from branch '$BRANCH_NAME'. Please enter project name:"
+        read PROJECT
+        # Keep asking until a non-empty value is given.
+        while [[ -z "$PROJECT" ]]; do
+            echo "Please enter a valid project name:"
+            read PROJECT
+        done
+    fi
+    export CURRENT_PROJECT="$PROJECT"
+    echo "CURRENT_PROJECT environment variable is set to --> $CURRENT_PROJECT"
+fi
+
+# Step 6: Try to extract the branch ID (the number after the project name).
+# For example, in 'feature/PROJECT-123-description', the ID is '123'.
+if [[ "$BRANCH_NAME" =~ ^(bugfix|feature|hotfix|release)/[A-Za-z0-9]+-([0-9]+) ]]; then
+    BRANCH_ID="${BASH_REMATCH[2]}"
+elif [[ "$BRANCH_NAME" =~ ^[A-Za-z0-9]+-([0-9]+) ]]; then
+    BRANCH_ID="${BASH_REMATCH[1]}"
+else
+    BRANCH_ID=""
+fi
+
+# Step 7: Ask the user for a commit message.
+# Make sure the message is not empty.
+echo "Enter your commit message:"
+read COMMIT
+while [[ -z "$COMMIT" ]]; do
+    echo "Please enter a valid commit message:"
+    read COMMIT
+done
+
+# Step 8: Commit the changes with a formatted message.
+# If the branch ID was found, add it to the commit in the format (#PROJECT-ID).
+if [[ -n "$BRANCH_ID" ]]; then
+    git commit -m "${COMMIT} (#${PROJECT}-${BRANCH_ID})"
+else
+    git commit -m "${COMMIT}"
+fi
+
+# Step 9: Ask the user if they want to push the changes to the remote repository.
+echo
+echo "Do you want to push [Y/n] to branch --> ${BRANCH_NAME}?"
+read STATUS
+# Convert the answer to lowercase to handle 'Y', 'y', 'Yes', etc.
+STATUS=$( tr '[:upper:]' '[:lower:]' <<<"$STATUS" )
+
+case "$STATUS" in
+    y | yes)
+        git push origin "${BRANCH_NAME}"
+        echo "Successfully pushed to branch --> ${BRANCH_NAME}"
+        ;;
+    *)
+        echo "Push skipped."
+        ;;
+esac
